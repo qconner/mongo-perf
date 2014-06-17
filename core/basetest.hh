@@ -111,16 +111,34 @@ namespace utils {
                             values.push_back(cc->getIterations() / secs );
                             meanSecs += secs;
                         }
+                        // calc mean seconds to execute iterations
                         meanSecs /= trials;
-
+                        // save baseline
                         if (nthreads == 1) 
                             one_micros = meanSecs;                
+
+                        // calculate mean ops/sec
+                        double mean = 0.0;
+                        BOOST_FOREACH(double a, values){
+                            mean += a;
+                        }
+                        mean /= trials;
+
+                        // calc variance
+                        double va = 0.0;
+                        BOOST_FOREACH(double a, values){
+                            va += (mean-a)*(mean-a);
+                        }
+                        va /= trials;
 
                         results.append(BSONObjBuilder::numStr(nthreads),
                                        BSON( "time" << meanSecs
                                           << "ops_per_sec" << cc->getIterations() / meanSecs
                                           << "speedup" << one_micros / meanSecs
                                           << "ops_per_sec_samples" << values
+                                          << "variance" << va
+                                          << "standardDeviation" << sqrt(va)
+                                          << "RSD" << sqrt(va) / (cc->getIterations() / meanSecs)
                                           ));
 
                         if (cc->getRaw()) {
