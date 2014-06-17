@@ -90,7 +90,7 @@ namespace utils {
 
                     double one_micros;
                     bool resetDone = false;
-                    const int trials = 3;
+                    const int trials = 30;
                     double meanSecs ;
                     std::vector<double> values;
                     BOOST_FOREACH(int nthreads, thread_nums){
