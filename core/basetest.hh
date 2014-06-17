@@ -90,29 +90,42 @@ namespace utils {
 
                     double one_micros;
                     bool resetDone = false;
+                    const int trials = 3;
+                    double meanSecs ;
+                    std::vector<double> values;
                     BOOST_FOREACH(int nthreads, thread_nums){
+                        values.clear();
+                        meanSecs = 0.0;
+                        for (int count = 0; count < trials; count++) {
 
-                        if (!test->readOnly() || !resetDone) {
-                            test->reset(cc);
-                            resetDone = true;
+                            if (!test->readOnly() || !resetDone) {
+                                test->reset(cc);
+                                resetDone = true;
+                            }
+
+                            startTime = boost::posix_time::microsec_clock::universal_time();
+                            launch_subthreads(nthreads, test);
+                            endTime = boost::posix_time::microsec_clock::universal_time();
+                            double secs = (endTime-startTime).total_microseconds() / 1000000.0;
+
+                            values.push_back(cc->getIterations() / secs );
+                            meanSecs += secs;
                         }
-                        startTime = boost::posix_time::microsec_clock::universal_time();
-                        launch_subthreads(nthreads, test);
-                        endTime = boost::posix_time::microsec_clock::universal_time();
-                        double micros = (endTime-startTime).total_microseconds() / 1000000.0;
+                        meanSecs /= trials;
 
                         if (nthreads == 1) 
-                            one_micros = micros;
+                            one_micros = meanSecs;                
 
                         results.append(BSONObjBuilder::numStr(nthreads),
-                                       BSON( "time" << micros
-                                          << "ops_per_sec" << cc->getIterations() / micros
-                                          << "speedup" << one_micros / micros
+                                       BSON( "time" << meanSecs
+                                          << "ops_per_sec" << cc->getIterations() / meanSecs
+                                          << "speedup" << one_micros / meanSecs
+                                          << "ops_per_sec_samples" << values
                                           ));
 
                         if (cc->getRaw()) {
                             cout << "Threads: " << nthreads << " ops/sec: "
-                                << cc->getIterations() / micros << endl;
+                                << cc->getIterations() / meanSecs << endl;
                         }
                     }
 
