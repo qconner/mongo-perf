@@ -11,7 +11,7 @@
         <script type="text/javascript" src="static/js/perf_lib.js"></script>
         <script type="text/javascript" src="static/js/jquery.dataTables.min.js"></script>
         <script type="text/javascript" src="static/js/jquery.flot.min.js"></script>
-        <script type="text/javascript" src="static/js/jquery.flot.errorbars.js"></script>
+        <script type="text/javascript" src="static/js/jquery.flot.errorbars.min.js"></script>
         <script>
             $(document).ready(function(){
                 $('table').dataTable({
@@ -136,14 +136,12 @@
                 var div = $('#flot_{{k}}')
                 var options =  {
                         grid: { hoverable: true, backgroundColor: { colors: ["#eceadf", "#d9d6c4"] } }, 
-                        series: { lines: { show: true }, points: { show: true } },
+                        series: { lines: { show: true }, points: { show: true, errorbars: 'y', yerr: {show: true, upperCap: "-", lowerCap: "-", radius: 5} } },
                         legend: { show: true, position: "nw", backgroundOpacity: 0,
                         container: $("#legendContainer_{{k}}"), noColumns: 2 },
                         xaxis: {ticks : {{threads}} },
                         yaxis: {min : 0},
-                        tooltip: true,
-                        errorBars: "y",
-                        yerr: {show:true, upperCap: "-", lowerCap: "-", radius: 5}
+                        tooltip: true
                     }
                 $.plot(div, data, options);
 

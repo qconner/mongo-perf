@@ -24,7 +24,7 @@ from datetime import datetime
 from collections import defaultdict
 
 MONGO_PERF_HOST = "localhost"
-MONGO_PERF_PORT = 27017
+MONGO_PERF_PORT = 27020
 MP_DB_NAME = "bench_results"
 db = pymongo.Connection(host=MONGO_PERF_HOST, 
                          port=MONGO_PERF_PORT)[MP_DB_NAME]
@@ -206,8 +206,6 @@ def results_page():
                     result['date'])), 'data': sorted( [int(k), v[metric], v['standardDeviation'] ]
                         for (k, v) in result.iteritems() if k.isdigit() )
                         })
-            print i
-            print out
             threads.update(int(k) for k in result if k.isdigit())
         flot_results.append(json.dumps(out))
 
@@ -274,4 +272,4 @@ def main_page():
 
 if __name__ == '__main__':
     do_reload = '--reload' in sys.argv
-    run(host='0.0.0.0', server=AutoServer, debug=do_reload)
+    run(host='0.0.0.0', port=8080, server=AutoServer, debug=do_reload)
