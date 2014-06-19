@@ -11,6 +11,7 @@
         <script type="text/javascript" src="static/js/perf_lib.js"></script>
         <script type="text/javascript" src="static/js/jquery.dataTables.min.js"></script>
         <script type="text/javascript" src="static/js/jquery.flot.min.js"></script>
+        <script type="text/javascript" src="static/js/jquery.flot.errorbars.js"></script>
         <script>
             $(document).ready(function(){
                 $('table').dataTable({
@@ -141,7 +142,8 @@
                         xaxis: {ticks : {{threads}} },
                         yaxis: {min : 0},
                         tooltip: true,
-                        errorBars: true
+                        errorBars: "y",
+                        yerr: {show:true, upperCap: "-", lowerCap: "-", radius: 5}
                     }
                 $.plot(div, data, options);
 
