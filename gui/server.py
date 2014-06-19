@@ -203,8 +203,8 @@ def results_page():
         out = []
         for i, result in enumerate(outer_result['results']):
             out.append({'label': " - ".join((result['label'], result['version'], 
-                    result['date'])), 'data': sorted([int(k), v[metric]]
-                        for (k, v) in result.iteritems() if k.isdigit())
+                    result['date'])), 'data': sorted( [int(k), v[metric], v['standardDeviation']]
+                        for (k, v) in result.iteritems() if k.isdigit() )
                         })
             threads.update(int(k) for k in result if k.isdigit())
         flot_results.append(json.dumps(out))

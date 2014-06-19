@@ -116,7 +116,9 @@
                     <td>{{result['date']}}</td>
                     <td><a href="https://github.com/mongodb/mongo/commit/{{result['commit']}}" target="_blank">{{result['commit'][:7]}}</a></td>
                     %for thread in threads:
-                    <td>{{"{0:.2f}".format(result.get(str(thread), {metric:'--'})[metric])}}</td>
+                    <td>{{"{0:.2f}".format(result.get(str(thread), {metric:'--'})[metric])}}<br/>
+                        &sigma; = {{"{0:.2f}".format(result.get(str(thread), {metric:'--'})['standardDeviation'])}}
+                    </td>
                     %end
                 </tr>
                 %end
@@ -138,7 +140,8 @@
                         container: $("#legendContainer_{{k}}"), noColumns: 2 },
                         xaxis: {ticks : {{threads}} },
                         yaxis: {min : 0},
-                        tooltip: true
+                        tooltip: true,
+                        errorBars: true
                     }
                 $.plot(div, data, options);
 
