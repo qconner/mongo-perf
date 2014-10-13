@@ -5,6 +5,7 @@
 # script should work on Linux, Solaris, MacOSX
 # for Windows, run under cygwin
 THIS_PLATFORM=`uname -s || echo unknown`
+
 # environment details, within Windows or Linux
 PLATFORM_SUFFIX=""
 if [ $THIS_PLATFORM == 'CYGWIN_NT-6.1' ]
@@ -17,9 +18,16 @@ then
     THIS_PLATFORM='Windows'
     PLATFORM_SUFFIX="2K12"
 fi
+# override Platform suffix / put custom attributes here
+# e.g. PLATFORM_SUFFIX="-numa"
+#PLATFORM_SUFFIX=""
 
 # *nix user name
-RUNUSER=mongo-perf
+# override may help if running as root,
+# but installed to a user home directory
+#RUNUSER=mongo-perf
+RUNUSER=${USER}
+
 # mongo-perf base directory
 if [ $THIS_PLATFORM == 'Darwin' ]
 then
@@ -29,36 +37,85 @@ else
 fi
 # mongo-perf working directory
 MPERFPATH=${MPERFBASE}/mongo-perf
+
 # build directory
 BUILD_DIR=${MPERFBASE}/mongo
-# test database
+
+# test database location
 DBPATH=${MPERFBASE}/db
-# executables
+
+# executable names
 SCONSPATH=scons
 MONGOD=mongod
 MONGO=mongo
-# path mongo shell
+
+# path to the mongo shell
 SHELLPATH=${BUILD_DIR}/${MONGO}
+
 # branch to monitor for checkins
 BRANCH=master
-NUM_CPUS=$(grep ^processor /proc/cpuinfo | wc -l)
+
+NUM_CPUS=$(grep ^processor /proc/cpuinfo | wc -l | awk -e '{print $1}')
+
 # remote database to store results
 # in C++ driver ConnectionString / DBClientConnection format
 # this example assumes a two-member replica set
-RHOST="mongo-perf/mongo-perf-db-1.vpc3.10gen.cc,mongo-perf-db-2.vpc3.10gen.cc"
+RHOST=localhost
 RPORT=27017
+
 # create this file to un-daemonize (exit the loop)
 BREAK_PATH=${MPERFBASE}/build-perf
-# trying to use sudo for cache flush, et al
+
+# use sudo (without password) for cache flush between runs
 SUDO=sudo
+
 # test agenda from all .js files found here
 TEST_DIR=${MPERFPATH}/testcases
-# seconds between polls
+
+# seconds between checking for something to do
 SLEEPTIME=60
+
 # uncomment to fetch recently-built binaries from mongodb.org instead of compiling from source
 #FETCHMCI='TRUE'
+
+# path to save downloaded binaries, if any
 DLPATH="${MPERFPATH}/download"
 
+# developer options on mongod command line, if any
+MONGOD_OPT=""
+
+# developer options for scons command line, if any
+SCONS_OPT=""
+
+# skip compile?  For local development use.
+SKIP_COMPILE=""
+
+# skip git (avoid modifying working copy)?  For local development use.
+SKIP_GIT=""
+
+# any external library dependencies?
+APPEND_LIB_PATH=""
+
+# any additions to the shared library path?
+if [ -n $APPEND_LIB_PATH ]
+then
+    LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${APPEND_LIB_PATH}
+    export LD_LIBRARY_PATH
+fi
+
+# file name for keeping state between invocations
+# modify for non-vanilla mongo-perf installs
+PERSIST_LAST_HASH=${HOME}/.last-mongo-perf
+if [ -n $FETCHMCI ]
+then
+    PERSIST_LAST_HASH=${PERSIST_LAST_HASH}_fetchmci
+fi
+if [ -n $APPEND_LIB_PATH ]
+then
+    PERSIST_LAST_HASH=${PERSIST_LAST_HASH}_externLib
+fi
+
+# windows-specific settings
 if [ $THIS_PLATFORM == 'Windows' ]
 then
     SCONSPATH=scons.bat
@@ -69,68 +126,132 @@ then
     SUDO=''
 fi
 
-# allow a branch or tag to be passed as the first argument
-if [ $# == 1 ]
+
+
+# ensure numa zone reclaims are off
+# TODO: prepend to the mongod command line
+CPUCTL=""
+numapath=$(which numactl)
+if [[ -x "$numapath" ]]
 then
-    BRANCH=$1
+    echo "turning off numa zone reclaims with:"
+    CPUCTL="numactl --interleave=all"
+    # TODO: intelligently set physcpubind
+    #CPUCTL="numactl --physcpubind=0-7 --interleave=all"
+    echo $CPUCTL
+else
+    echo "numactl not found on this machine"
+    # TODO: run taskset instead
+    # echo taskset -xff
 fi
+
+# look for command line arguments
+OPTIND=1 
+while getopts "b:s:d:C?G?L:" opt; do
+    case "${opt}" in
+    b)
+        # run only this branch
+        BRANCH=${OPTARG}
+        ;;
+    s)
+        # extra scons build option
+        SCONS_OPT=${OPTARG}
+        ;;
+    d)
+        # mongod extra option
+        MONGOD_OPT=${OPTARG}
+        ;;
+    c)
+        # skip compilation / leave working copy alone
+        SKIP_COMPILE="true"
+        ;;
+    g)
+        # skip git / leave working copy alone
+        SKIP_GIT="true"
+        ;;
+    l)
+        APPEND_LIB_PATH=${OPTARG}
+        ;;
+    esac
+done
+
+
 
 function do_git_tasks() {
     cd $BUILD_DIR || exit 1
     rm -rf build
 
-    if [ -z $FETCHMCI ]
+    if [ -z $FETCHMCI & -z $SKIP_GIT ]
     then
         # local compile
         # some extra gyration here to allow/automate a local patch
+        git fetch --all
         git checkout -- .
-        git checkout master
-        git pull
         git checkout $BRANCH
         git pull
         git clean -fqdx
         # apply local patch here, if any
         #patch -p 1 -F 3 < ${HOME}/pinValue.patch
     else
-        # fetch latest binaries from MCI
-        git checkout -- .
-        git checkout master
-        git pull
-        git clean -fqdx
+        echo "SKIPPING GIT CHECKOUT"
+    fi
+}
 
-        cd ${MPERFPATH} || exit 1
-        echo "downloading binary artifacts from MCI"
-        if [ $THIS_PLATFORM == 'Windows' ]
+function do_mci_tasks() {
+    cd $BUILD_DIR || exit 1
+    # fetch latest binaries from MCI
+    git checkout -- .
+    git checkout master
+    git pull
+    git clean -fqdx
+
+
+    cd ${MPERFPATH} || exit 1
+    echo "downloading binary artifacts from MCI for branch ${BRANCH}"
+    if [ $THIS_PLATFORM == 'Windows' ]
+    then
+        if [ $BRANCH == 'master' ]
         then
-            if [ $BRANCH == 'master' ]
-            then
-                python `cygpath -w ${MPERFPATH}/util/get_binaries.py` --dir `cygpath -w "${DLPATH}"` --distribution 2008plus
-            else
-                python `cygpath -w ${MPERFPATH}/util/get_binaries.py` --revision ${BRANCH} --dir `cygpath -w "${DLPATH}"` --distribution 2008plus
-            fi
+            python `cygpath -w ${MPERFPATH}/util/get_binaries.py` --dir `cygpath -w "${DLPATH}"` --distribution 2008plus
         else
-            if [ $BRANCH == 'master' ]
-            then
-                python ${MPERFPATH}/util/get_binaries.py --dir "${DLPATH}"
-            else
-                python ${MPERFPATH}/util/get_binaries.py --revision ${BRANCH} --dir "${DLPATH}"
-            fi
+            python `cygpath -w ${MPERFPATH}/util/get_binaries.py` --revision ${BRANCH} --dir `cygpath -w "${DLPATH}"` --distribution 2008plus
         fi
-        chmod +x ${DLPATH}/${MONGOD}
-        cp -p ${DLPATH}/${MONGOD} ${BUILD_DIR}
-        cp -p ${DLPATH}/${MONGO} ${BUILD_DIR}
-        BINHASH=""
-        BINHASH=$(${DLPATH}/${MONGOD} --version | egrep git.version|perl -pe '$_="$1" if m/git.version:\s(\w+)/')
-        if [ -z $BINHASH ]
+    else
+        if [ $BRANCH == 'master' ]
         then
-            echo "ERROR: could not determine git commit hash from downloaded binaries"
+            python ${MPERFPATH}/util/get_binaries.py --dir "${DLPATH}"
         else
-            cd $BUILD_DIR
-            git checkout $BINHASH
-            git pull
+            python ${MPERFPATH}/util/get_binaries.py --revision ${BRANCH} --dir "${DLPATH}"
         fi
     fi
+    if [$? != 0]
+    then
+        # no binaries found
+        echo "ERROR: no binaries found for ${BRANCH}"
+        exit 1
+    fi
+    chmod +x ${DLPATH}/${MONGOD}
+    cp -p ${DLPATH}/${MONGOD} ${BUILD_DIR}
+    cp -p ${DLPATH}/${MONGO} ${BUILD_DIR}
+    BINHASH=""
+    BINHASH=$(${DLPATH}/${MONGOD} --version | egrep git.version|perl -pe '$_="$1" if m/git.version:\s(\w+)/')
+    if [ -z $BINHASH ]
+    then
+        echo "ERROR: could not determine git commit hash from downloaded binaries"
+    else
+        cd $BUILD_DIR
+        git checkout $BINHASH
+        git pull
+    fi
+}
 
+function is_this_new() {
+    cd $BUILD_DIR
+    if [ -e $PERSIST_LAST_HASH ]
+        LAST_HASH=$(cat $PERSIST_LAST_HASH)
+    else
+        LAST_HAST=""
+    fi
     if [ -z "$LAST_HASH" ]
     then
         LAST_HASH=$(git rev-parse HEAD)
@@ -142,10 +263,12 @@ function do_git_tasks() {
             return 0
         else
             LAST_HASH=$NEW_HASH
+            echo $LAST_HASH > $PERSIST_LAST_HASH
             return 1
         fi
     fi
 }
+
 
 function run_build() {
     cd $BUILD_DIR
@@ -153,9 +276,9 @@ function run_build() {
     then
         if [ $THIS_PLATFORM == 'Windows' ]
         then
-            ${SCONSPATH} -j $NUM_CPUS --64 --release --win2008plus ${MONGOD} ${MONGO}
+            ${SCONSPATH} -j $NUM_CPUS --64 --release --win2008plus ${SCONS_OPT} ${MONGOD} ${MONGO}
         else
-            ${SCONSPATH} -j $NUM_CPUS --64 --release ${MONGOD} ${MONGO}
+            ${SCONSPATH} -j $NUM_CPUS --64 --release ${SCONS_OPT} ${MONGOD} ${MONGO}
         fi
     fi
 }
@@ -168,8 +291,8 @@ function run_mongo-perf() {
         rm -rf `cygpath -u $DBPATH`/*
         (./${MONGOD} --dbpath "${DBPATH}" --smallfiles --logpath mongoperf.log &)
     else
-        rm -rf $DBPATH/*
-        ./${MONGOD} --dbpath "${DBPATH}" --smallfiles --fork --logpath mongoperf.log
+        rm -rf ${DBPATH}/*
+        ${CPUCTL} ./${MONGOD} --dbpath "${DBPATH}" --smallfiles --fork --logpath mongoperf.log ${MONGOD_OPT}
     fi
     # TODO: doesn't get set properly with --fork ?
     MONGOD_PID=$!
@@ -194,7 +317,7 @@ function run_mongo-perf() {
     then
         python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path `cygpath -w ${BUILD_DIR}` --safe false -w 0 -j false --writeCmd true
     else
-        python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
+        ${CPUCTL} python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
     fi
 
     # drop linux caches
@@ -205,7 +328,7 @@ function run_mongo-perf() {
     then
         python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path `cygpath -w ${BUILD_DIR}` --safe false -w 0 -j false --writeCmd true
     else
-        python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
+        echo ${CPUCTL} python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
     fi
 
     # Kill the mongod process and perform cleanup.
@@ -218,25 +341,18 @@ function run_mongo-perf() {
 }
 
 
-# housekeeping
-
-# ensure numa zone reclaims are off
-numapath=$(which numactl)
-if [[ -x "$numapath" ]]
-then
-    echo "turning off numa zone reclaims"
-    ${SUDO} numactl --interleave=all
-else
-    echo "numactl not found on this machine"
-fi
+# housekeeping for meaningful benchmarks
+# includes 
 
 # disable transparent huge pages
+# modify to work with your Linux distribution
 if [ -e /sys/kernel/mm/transparent_hugepage/enabled ]
 then
     echo never | ${SUDO} tee /sys/kernel/mm/transparent_hugepage/enabled /sys/kernel/mm/transparent_hugepage/defrag
 fi
 
 # if cpufreq scaling governor is present, ensure we aren't in power save (speed step) mode
+# modify to work with your Linux distribution
 if [ -e /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]
 then
     echo performance | ${SUDO} tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
@@ -246,19 +362,41 @@ fi
 # main loop
 while [ true ]
 do
-    do_git_tasks
+    # download binaries or prepare source code
+    if [ -n $FETCHMCI ]
+    then
+        do_mci_tasks
+    else
+        if [ -z $SKIP_GIT ]
+        then
+            do_git_tasks
+        fi
+    fi
+
+    # look at build dir Git hash
+    is_this_new()
     if [ $? == 0 ]
     then
         sleep $SLEEPTIME
         continue
-    else
+    fi
+
+    # compile?
+    if [ -z $FETCHMCI & -z $SKIP_GIT & -z $SKIP_COMPILE ]
+    then
         run_build
-        if [ $? == 0 ]
+        if [ $? != 0 ]
         then
-            run_mongo-perf
+            continue
         fi
     fi
-    if [ -e $BREAK_PATH ]
+
+    # if we made it this far execute the benchmark
+    run_mongo_perf
+
+    # exit if requested by user, this is a one-time (branch, tag or specific
+    # commit) run, or this is a no-compile run
+    if [ -e $BREAK_PATH | -n $BRANCH | -n $SKIP_GIT ]
     then
         break
     fi
