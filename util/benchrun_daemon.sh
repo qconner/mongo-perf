@@ -29,6 +29,7 @@ fi
 RUNUSER=${USER}
 
 # mongo-perf base directory
+# override if not $HOME
 if [ $THIS_PLATFORM == 'Darwin' ]
 then
     MPERFBASE=/Users/${RUNUSER}
@@ -36,12 +37,15 @@ else
     MPERFBASE=/home/${RUNUSER}
 fi
 # mongo-perf working directory
+# override if not $HOME/mongo-perf
 MPERFPATH=${MPERFBASE}/mongo-perf
 
 # build directory
+# override if not $HOME/mongo
 BUILD_DIR=${MPERFBASE}/mongo
 
 # test database location
+# override if not $HOME/db
 DBPATH=${MPERFBASE}/db
 
 # executable names
@@ -55,7 +59,11 @@ SHELLPATH=${BUILD_DIR}/${MONGO}
 # branch to monitor for checkins
 BRANCH=master
 
-NUM_CPUS=$(grep ^processor /proc/cpuinfo | wc -l | awk -e '{print $1}')
+NUM_CPUS=1
+if [ -e /proc/cpuinfo ]
+then
+    NUM_CPUS=$(grep ^processor /proc/cpuinfo | wc -l | awk '{print $1}')
+fi
 
 # remote database to store results
 # in C++ driver ConnectionString / DBClientConnection format
@@ -81,36 +89,51 @@ SLEEPTIME=60
 # path to save downloaded binaries, if any
 DLPATH="${MPERFPATH}/download"
 
-# developer options on mongod command line, if any
-MONGOD_OPT=""
+# developer options for the mongod command line, if any
+#MONGOD_OPT="--storageEngine wiredtiger"
 
-# developer options for scons command line, if any
-SCONS_OPT=""
+# developer options for the scons command line, if any
+#SCONS_OPT="--wiredtiger --cpppath=${HOME}/wiredtiger/LOCAL_INSTALL/include --libpath=${HOME}/wiredtiger/LOCAL_INSTALL/lib core"
 
 # skip compile?  For local development use.
-SKIP_COMPILE=""
+# use the -C option
+#SKIP_COMPILE="true"
 
 # skip git (avoid modifying working copy)?  For local development use.
-SKIP_GIT=""
+# use the -G option
+#SKIP_GIT="true"
 
 # any external library dependencies?
-APPEND_LIB_PATH=""
+#EXT_LIB="$HOME/wiredtiger"
+#EXT_LIB="$HOME/src/wiredtiger"
+if [ -n "$EXT_LIB" ]
+then
+    EXT_LIB_PREFIX="$EXT_LIB/LOCAL_INSTALL"
+    APPEND_LIB_PATH="$EXT_LIB_PREFIX/lib"
+fi
 
 # any additions to the shared library path?
-if [ -n $APPEND_LIB_PATH ]
+if [ -n "$APPEND_LIB_PATH" ]
 then
-    LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${APPEND_LIB_PATH}
+    if [ -z $LD_LIBRARY_PATH ]
+    then
+        LD_LIBRARY_PATH=${APPEND_LIB_PATH}
+    else
+        LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${APPEND_LIB_PATH}
+    fi
     export LD_LIBRARY_PATH
+    echo "found external library dependency"
 fi
+
 
 # file name for keeping state between invocations
 # modify for non-vanilla mongo-perf installs
 PERSIST_LAST_HASH=${HOME}/.last-mongo-perf
-if [ -n $FETCHMCI ]
+if [ -n "$FETCHMCI" ]
 then
     PERSIST_LAST_HASH=${PERSIST_LAST_HASH}_fetchmci
 fi
-if [ -n $APPEND_LIB_PATH ]
+if [ -n "$APPEND_LIB_PATH" ]
 then
     PERSIST_LAST_HASH=${PERSIST_LAST_HASH}_externLib
 fi
@@ -161,16 +184,17 @@ while getopts "b:s:d:C?G?L:" opt; do
         # mongod extra option
         MONGOD_OPT=${OPTARG}
         ;;
-    c)
+    C)
         # skip compilation / leave working copy alone
         SKIP_COMPILE="true"
         ;;
-    g)
+    G)
         # skip git / leave working copy alone
         SKIP_GIT="true"
         ;;
-    l)
-        APPEND_LIB_PATH=${OPTARG}
+    L)
+        # external library path
+        EXT_LIB=${OPTARG}
         ;;
     esac
 done
@@ -197,15 +221,18 @@ function do_git_tasks() {
     fi
 }
 
+
 function do_mci_tasks() {
     cd $BUILD_DIR || exit 1
+    if [ -z "$SKIP_GIT" ]
+    then
+        git checkout -- .
+        git checkout master
+        git pull
+        git clean -fqdx
+    fi
+
     # fetch latest binaries from MCI
-    git checkout -- .
-    git checkout master
-    git pull
-    git clean -fqdx
-
-
     cd ${MPERFPATH} || exit 1
     echo "downloading binary artifacts from MCI for branch ${BRANCH}"
     if [ $THIS_PLATFORM == 'Windows' ]
@@ -224,7 +251,7 @@ function do_mci_tasks() {
             python ${MPERFPATH}/util/get_binaries.py --revision ${BRANCH} --dir "${DLPATH}"
         fi
     fi
-    if [$? != 0]
+    if [ $? != 0 ]
     then
         # no binaries found
         echo "ERROR: no binaries found for ${BRANCH}"
@@ -239,15 +266,20 @@ function do_mci_tasks() {
     then
         echo "ERROR: could not determine git commit hash from downloaded binaries"
     else
-        cd $BUILD_DIR
-        git checkout $BINHASH
-        git pull
+        cd $BUILD_DIR || exit 1
+        if [ -z "$SKIP_GIT" ]
+        then
+            git checkout $BINHASH
+            git pull
+        fi
     fi
 }
+
 
 function is_this_new() {
     cd $BUILD_DIR
     if [ -e $PERSIST_LAST_HASH ]
+    then
         LAST_HASH=$(cat $PERSIST_LAST_HASH)
     else
         LAST_HAST=""
@@ -270,7 +302,15 @@ function is_this_new() {
 }
 
 
-function run_build() {
+function run_library_build() {
+    cd $EXT_LIB
+    git checkout -- .
+    sh build_posix/reconf
+    ./configure --with-builtins=snappy,zlib --prefix=$(EXT_LIB_PREFIX)
+    make install || exit 2
+}
+
+function run_mongod_build() {
     cd $BUILD_DIR
     if [ -z $FETCHMCI ]
     then
@@ -310,7 +350,10 @@ function run_mongo-perf() {
     THREAD_COUNTS="16 8 4 2 1"
 
     # drop linux caches
-    ${SUDO} bash -c "echo 3 > /proc/sys/vm/drop_caches"
+    if [ -e /proc/sys/vm/drop_caches ]
+    then
+        ${SUDO} bash -c "echo 3 > /proc/sys/vm/drop_caches"
+    fi
 
     # Run with single DB.
     if [ $THIS_PLATFORM == 'Windows' ]
@@ -321,7 +364,10 @@ function run_mongo-perf() {
     fi
 
     # drop linux caches
-    ${SUDO} bash -c "echo 3 > /proc/sys/vm/drop_caches"
+    if [ -e /proc/sys/vm/drop_caches ]
+    then
+        ${SUDO} bash -c "echo 3 > /proc/sys/vm/drop_caches"
+    fi
 
     # Run with multi-DB (4 DBs.)
     if [ $THIS_PLATFORM == 'Windows' ]
@@ -363,11 +409,11 @@ fi
 while [ true ]
 do
     # download binaries or prepare source code
-    if [ -n $FETCHMCI ]
+    if [ -n "$FETCHMCI" ]
     then
         do_mci_tasks
     else
-        if [ -z $SKIP_GIT ]
+        if [ -z "$SKIP_GIT" ]
         then
             do_git_tasks
         fi
@@ -382,17 +428,30 @@ do
     fi
 
     # compile?
-    if [ -z $FETCHMCI & -z $SKIP_GIT & -z $SKIP_COMPILE ]
+    if [[ -z "$FETCHMCI" && -z "$SKIP_GIT" && -z "$SKIP_COMPILE" ]]
     then
-        run_build
+        echo COMPILING EXTERNAL LIBRARY
+        run_library_build
         if [ $? != 0 ]
         then
+            sleep $SLEEPTIME
             continue
         fi
+
+        echo COMPILING MONGO LOCALLY
+        run_mongod_build
+        if [ $? != 0 ]
+        then
+            sleep $SLEEPTIME
+            continue
+        fi
+    else
+        echo SKIPPING COMPILE
     fi
 
     # if we made it this far execute the benchmark
-    run_mongo_perf
+    echo RUNNING BENCHMARK
+    run_mongo-perf
 
     # exit if requested by user, this is a one-time (branch, tag or specific
     # commit) run, or this is a no-compile run
@@ -400,4 +459,6 @@ do
     then
         break
     fi
+
+
 done
