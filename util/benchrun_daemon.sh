@@ -213,7 +213,7 @@ function do_git_tasks() {
     cd $BUILD_DIR || exit 1
     rm -rf build
 
-    if [[ -z "$FETCHMCI" && -z $"SKIP_GIT" ]]
+    if [[ -z "$FETCHMCI" && -z "$SKIP_GIT" ]]
     then
         # local compile
         # some extra gyration here to allow/automate a local patch
