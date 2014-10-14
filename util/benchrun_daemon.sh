@@ -496,12 +496,11 @@ do
         fi
 
 
-        if [ "$COMPILE_FAILED" != "false" ]
+        if [ "$COMPILE_FAILED" == "false" ]
         then
             # execute the benchmark
             echo RUNNING BENCHMARK
-            #run_mongo-perf
-            sleep 5
+            run_mongo-perf
             # save last git hash if we made it this far
             save_last_hash
         fi
