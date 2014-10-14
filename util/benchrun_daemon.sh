@@ -376,7 +376,7 @@ function run_mongo-perf() {
 
     sleep 30
 
-    cd $MPERPATH
+    cd $MPERFPATH
     TIME="$(date "+%m%d%Y_%H:%M")"
 
     # list of testcase definitions
@@ -463,7 +463,8 @@ do
     fi
 
     # look at source code Git hash(es)
-    COMPILE_FAILED=false
+    unset COMPILE_FAILED
+    COMPILE_FAILED=""
     is_source_new
     if [ $? == 0 ]
     then
@@ -478,25 +479,24 @@ do
             run_library_build
             if [ $? != 0 ]
             then
-                COMPILE_FAILED=true
+                COMPILE_FAILED="true"
             fi
         fi
 
         # compile mongo?
-        if [[ -z "$FETCHMCI" && -z "$SKIP_COMPILE" && "$COMPILE_FAILED" != "false" ]]
+        if [[ -z "$FETCHMCI" && -z "$SKIP_COMPILE" && -z "$COMPILE_FAILED" ]]
         then
             echo COMPILING MONGO LOCALLY
             run_mongod_build
             if [ $? != 0 ]
             then
-                COMPILE_FAILED=true
+                COMPILE_FAILED="true"
             fi
         else
             echo SKIPPING COMPILE
         fi
 
-
-        if [ "$COMPILE_FAILED" == "false" ]
+        if [ "$COMPILE_FAILED" != "true" ]
         then
             # execute the benchmark
             echo RUNNING BENCHMARK
