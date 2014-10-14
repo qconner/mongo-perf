@@ -83,6 +83,43 @@ TEST_DIR=${MPERFPATH}/testcases
 # seconds between checking for something to do
 SLEEPTIME=60
 
+# parse command line options, if any
+OPTIND=1 
+#set -x
+while getopts "b:s:d:f?:C?:G?:L:" opt; do
+    case "${opt}" in
+    b)
+        # run only this branch
+        BRANCH=${OPTARG}
+        ;;
+    s)
+        # extra scons build option
+        SCONS_OPT=${OPTARG}
+        ;;
+    d)
+        # mongod extra option
+        MONGOD_OPT=${OPTARG}
+        ;;
+    f)
+        # fetch binaries from MCI
+        FETCH_MCI="true"
+        ;;
+    C)
+        # skip compilation / leave working copy alone
+        SKIP_COMPILE="true"
+        ;;
+    G)
+        # skip git / leave working copy alone
+        SKIP_GIT="true"
+        ;;
+    L)
+        # external library path
+        EXT_LIB=${OPTARG}
+        ;;
+    esac
+done
+#set +x
+
 # uncomment to fetch recently-built binaries from mongodb.org instead of compiling from source
 #FETCHMCI='TRUE'
 
@@ -104,6 +141,7 @@ DLPATH="${MPERFPATH}/download"
 #SKIP_GIT="true"
 
 # any external library dependencies?
+# use the -L option
 #EXT_LIB="$HOME/wiredtiger"
 #EXT_LIB="$HOME/src/wiredtiger"
 if [ -n "$EXT_LIB" ]
@@ -168,36 +206,6 @@ else
     # echo taskset -xff
 fi
 
-# look for command line arguments
-OPTIND=1 
-while getopts "b:s:d:C?G?L:" opt; do
-    case "${opt}" in
-    b)
-        # run only this branch
-        BRANCH=${OPTARG}
-        ;;
-    s)
-        # extra scons build option
-        SCONS_OPT=${OPTARG}
-        ;;
-    d)
-        # mongod extra option
-        MONGOD_OPT=${OPTARG}
-        ;;
-    C)
-        # skip compilation / leave working copy alone
-        SKIP_COMPILE="true"
-        ;;
-    G)
-        # skip git / leave working copy alone
-        SKIP_GIT="true"
-        ;;
-    L)
-        # external library path
-        EXT_LIB=${OPTARG}
-        ;;
-    esac
-done
 
 
 
@@ -205,10 +213,11 @@ function do_git_tasks() {
     cd $BUILD_DIR || exit 1
     rm -rf build
 
-    if [ -z $FETCHMCI & -z $SKIP_GIT ]
+    if [[ -z "$FETCHMCI" && -z $"SKIP_GIT" ]]
     then
         # local compile
         # some extra gyration here to allow/automate a local patch
+        echo PULL FROM GIT
         git fetch --all
         git checkout -- .
         git checkout $BRANCH
@@ -221,6 +230,21 @@ function do_git_tasks() {
     fi
 }
 
+
+function do_library_git_pull() {
+    cd $EXT_LIB || exit 1
+    if [ -z "$SKIP_GIT" ]
+    then
+        echo "LIBRARY CHECKOUT"
+        git fetch --all
+        git checkout -- .
+        git checkout $BRANCH
+        git pull
+        git clean -fqdx
+    else
+        echo "SKIPPING LIBRARY GIT CHECKOUT"
+    fi
+}
 
 function do_mci_tasks() {
     cd $BUILD_DIR || exit 1
@@ -276,7 +300,7 @@ function do_mci_tasks() {
 }
 
 
-function is_this_new() {
+function is_source_new() {
     cd $BUILD_DIR
     if [ -e $PERSIST_LAST_HASH ]
     then
@@ -286,27 +310,42 @@ function is_this_new() {
     fi
     if [ -z "$LAST_HASH" ]
     then
-        LAST_HASH=$(git rev-parse HEAD)
+        if [ -z "$EXT_LIB" ]
+        then
+            LAST_HASH="$(cd $BUILD_DIR ; git rev-parse HEAD)"
+        else
+            LAST_HASH="$(cd $BUILD_DIR ; git rev-parse HEAD) $(cd $EXT_LIB ; git rev-parse HEAD)"
+        fi
         return 1
     else
-        NEW_HASH=$(git rev-parse HEAD)
+        if [ -z "$EXT_LIB" ]
+        then
+            NEW_HASH="$(cd $BUILD_DIR ; git rev-parse HEAD)"
+        else
+            NEW_HASH="$(cd $BUILD_DIR ; git rev-parse HEAD) $(cd $EXT_LIB ; git rev-parse HEAD)"
+        fi
         if [ "$LAST_HASH" == "$NEW_HASH" ]
         then
             return 0
         else
             LAST_HASH=$NEW_HASH
-            echo $LAST_HASH > $PERSIST_LAST_HASH
             return 1
         fi
     fi
 }
 
+function save_last_hash() {
+    saving $LAST_HASH to $PERSIST_LAST_HASH
+    echo $LAST_HASH > $PERSIST_LAST_HASH
+}
+
 
 function run_library_build() {
-    cd $EXT_LIB
+    cd $EXT_LIB || exit 1
     git checkout -- .
+    git pull
     sh build_posix/reconf
-    ./configure --with-builtins=snappy,zlib --prefix=$(EXT_LIB_PREFIX)
+    ./configure --with-builtins=snappy,zlib --prefix=${EXT_LIB_PREFIX}
     make install || exit 2
 }
 
@@ -339,7 +378,7 @@ function run_mongo-perf() {
 
     sleep 30
 
-    cd $MPERFPATH
+    cd $MPERPATH
     TIME="$(date "+%m%d%Y_%H:%M")"
 
     # list of testcase definitions
@@ -419,8 +458,14 @@ do
         fi
     fi
 
+    # prepare ext lib source code, if any
+    if [ -n "$EXT_LIB" ]
+    then
+        do_library_git_pull
+    fi
+
     # look at build dir Git hash
-    is_this_new()
+    is_source_new()
     if [ $? == 0 ]
     then
         sleep $SLEEPTIME
@@ -430,12 +475,15 @@ do
     # compile?
     if [[ -z "$FETCHMCI" && -z "$SKIP_GIT" && -z "$SKIP_COMPILE" ]]
     then
-        echo COMPILING EXTERNAL LIBRARY
-        run_library_build
-        if [ $? != 0 ]
+        if [ -n "$EXT_LIB" ]
         then
-            sleep $SLEEPTIME
-            continue
+            echo COMPILING EXTERNAL LIBRARY
+            run_library_build
+            if [ $? != 0 ]
+            then
+                sleep $SLEEPTIME
+                continue
+            fi
         fi
 
         echo COMPILING MONGO LOCALLY
@@ -449,9 +497,12 @@ do
         echo SKIPPING COMPILE
     fi
 
-    # if we made it this far execute the benchmark
+    # execute the benchmark
     echo RUNNING BENCHMARK
     run_mongo-perf
+
+    # save last git hash if we made it this far
+    save_last_hash()
 
     # exit if requested by user, this is a one-time (branch, tag or specific
     # commit) run, or this is a no-compile run
