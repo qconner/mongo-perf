@@ -86,7 +86,7 @@ SLEEPTIME=60
 # parse command line options, if any
 OPTIND=1 
 #set -x
-while getopts "b:s:d:f?:C?:G?:L:" opt; do
+while getopts "b:s:d:f?:C?:G?:L:1?:" opt; do
     case "${opt}" in
     b)
         # run only this branch
@@ -102,7 +102,7 @@ while getopts "b:s:d:f?:C?:G?:L:" opt; do
         ;;
     f)
         # fetch binaries from MCI
-        FETCH_MCI="true"
+        FETCHMCI="true"
         ;;
     C)
         # skip compilation / leave working copy alone
@@ -115,6 +115,10 @@ while getopts "b:s:d:f?:C?:G?:L:" opt; do
     L)
         # external library path
         EXT_LIB=${OPTARG}
+        ;;
+    1)
+        # run one time only
+        ONETIME="true"
         ;;
     esac
 done
@@ -139,6 +143,9 @@ DLPATH="${MPERFPATH}/download"
 # skip git (avoid modifying working copy)?  For local development use.
 # use the -G option
 #SKIP_GIT="true"
+
+# uncomment to run once through the loop only
+#ONETIME="true"
 
 # any external library dependencies?
 # use the -L option
@@ -217,7 +224,7 @@ function do_git_tasks() {
     then
         # local compile
         # some extra gyration here to allow/automate a local patch
-        echo PULL FROM GIT
+        echo; echo PULL FROM GIT
         git fetch --all
         git checkout -- .
         git checkout $BRANCH
@@ -226,7 +233,7 @@ function do_git_tasks() {
         # apply local patch here, if any
         #patch -p 1 -F 3 < ${HOME}/pinValue.patch
     else
-        echo "SKIPPING GIT CHECKOUT"
+        echo ; echo "SKIPPING GIT CHECKOUT"
     fi
 }
 
@@ -235,14 +242,14 @@ function do_library_git_pull() {
     cd $EXT_LIB || exit 1
     if [ -z "$SKIP_GIT" ]
     then
-        echo "LIBRARY CHECKOUT"
+        echo ; echo "LIBRARY CHECKOUT"
         git fetch --all
         git checkout -- .
         git checkout $BRANCH
         git pull
         git clean -fqdx
     else
-        echo "SKIPPING LIBRARY GIT CHECKOUT"
+        echo ; echo "SKIPPING LIBRARY GIT CHECKOUT"
     fi
 }
 
@@ -335,7 +342,7 @@ function is_source_new() {
 }
 
 function save_last_hash() {
-    echo SAVING GOOD HASH to $PERSIST_LAST_HASH
+    echo ; echo SAVING GOOD HASH to $PERSIST_LAST_HASH
     echo $LAST_HASH > $PERSIST_LAST_HASH
 }
 
@@ -411,8 +418,9 @@ function run_mongo-perf() {
     then
         python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path `cygpath -w ${BUILD_DIR}` --safe false -w 0 -j false --writeCmd true
     else
-        echo ${CPUCTL} python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
+        ${CPUCTL} python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
     fi
+
 
     # Kill the mongod process and perform cleanup.
     kill -n 9 ${MONGOD_PID}
@@ -431,7 +439,8 @@ function run_mongo-perf() {
 # modify to work with your Linux distribution
 if [ -e /sys/kernel/mm/transparent_hugepage/enabled ]
 then
-    echo never | ${SUDO} tee /sys/kernel/mm/transparent_hugepage/enabled /sys/kernel/mm/transparent_hugepage/defrag
+    echo never | ${SUDO} tee /sys/kernel/mm/transparent_hugepage/enabled
+    echo never | ${SUDO} tee /sys/kernel/mm/transparent_hugepage/defrag
 fi
 
 # if cpufreq scaling governor is present, ensure we aren't in power save (speed step) mode
@@ -463,19 +472,18 @@ do
     fi
 
     # look at source code Git hash(es)
-    unset COMPILE_FAILED
     COMPILE_FAILED=""
     is_source_new
     if [ $? == 0 ]
     then
         # same as last time
-        echo SOURCE CODE HAS NOT CHANGED.  SKIPPING BENCHMARK RUN.
+        echo ; echo SOURCE CODE HAS NOT CHANGED.  SKIPPING BENCHMARK RUN.
         echo "rm ${PERSIST_LAST_HASH} # TO FORCE A RUN."
     else
         # compile ext lib?
         if [[ -n "$EXT_LIB" && -z "$SKIP_COMPILE" ]]
         then
-            echo COMPILING EXTERNAL LIBRARY
+            echo ; echo COMPILING EXTERNAL LIBRARY
             run_library_build
             if [ $? != 0 ]
             then
@@ -486,20 +494,20 @@ do
         # compile mongo?
         if [[ -z "$FETCHMCI" && -z "$SKIP_COMPILE" && -z "$COMPILE_FAILED" ]]
         then
-            echo COMPILING MONGO LOCALLY
+            echo ; echo COMPILING MONGO LOCALLY
             run_mongod_build
             if [ $? != 0 ]
             then
                 COMPILE_FAILED="true"
             fi
         else
-            echo SKIPPING COMPILE
+            echo ;echo "SKIPPING COMPILE"
         fi
 
         if [ "$COMPILE_FAILED" != "true" ]
         then
             # execute the benchmark
-            echo RUNNING BENCHMARK
+            echo ; echo RUNNING BENCHMARK
             run_mongo-perf
             # save last git hash if we made it this far
             save_last_hash
@@ -508,7 +516,7 @@ do
 
     # exit if requested by user, this is a one-time (branch, tag or specific
     # commit) run, or this is a no-compile run
-    if [[ -e "$BREAK_PATH" || -n "$BRANCH" || -n "$SKIP_GIT" ]]
+    if [[ -e "$BREAK_PATH" || -n "$ONETIME" ]]
     then
         break
     fi
