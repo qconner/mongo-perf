@@ -59,7 +59,7 @@ SHELLPATH=${BUILD_DIR}/${MONGO}
 # branch to monitor for checkins
 BRANCH=master
 
-NUM_CPUS=1
+NUM_CPUS=4
 if [ -e /proc/cpuinfo ]
 then
     NUM_CPUS=$(grep ^processor /proc/cpuinfo | wc -l | awk '{print $1}')
@@ -335,15 +335,13 @@ function is_source_new() {
 }
 
 function save_last_hash() {
-    saving $LAST_HASH to $PERSIST_LAST_HASH
+    echo SAVING GOOD HASH to $PERSIST_LAST_HASH
     echo $LAST_HASH > $PERSIST_LAST_HASH
 }
 
 
 function run_library_build() {
     cd $EXT_LIB || exit 1
-    git checkout -- .
-    git pull
     sh build_posix/reconf
     ./configure --with-builtins=snappy,zlib --prefix=${EXT_LIB_PREFIX}
     make install || exit 2
@@ -459,57 +457,62 @@ do
     fi
 
     # prepare ext lib source code, if any
-    if [ -n "$EXT_LIB" ]
+    if [[ -n "$EXT_LIB" && -z "$SKIP_GIT" ]]
     then
         do_library_git_pull
     fi
 
-    # look at build dir Git hash
-    is_source_new()
+    # look at source code Git hash(es)
+    COMPILE_FAILED=false
+    is_source_new
     if [ $? == 0 ]
     then
-        sleep $SLEEPTIME
-        continue
-    fi
-
-    # compile?
-    if [[ -z "$FETCHMCI" && -z "$SKIP_GIT" && -z "$SKIP_COMPILE" ]]
-    then
-        if [ -n "$EXT_LIB" ]
+        # same as last time
+        echo SOURCE CODE HAS NOT CHANGED.  SKIPPING BENCHMARK RUN.
+        echo "rm ${PERSIST_LAST_HASH} # TO FORCE A RUN."
+    else
+        # compile ext lib?
+        if [[ -n "$EXT_LIB" && -z "$SKIP_COMPILE" ]]
         then
             echo COMPILING EXTERNAL LIBRARY
             run_library_build
             if [ $? != 0 ]
             then
-                sleep $SLEEPTIME
-                continue
+                COMPILE_FAILED=true
             fi
         fi
 
-        echo COMPILING MONGO LOCALLY
-        run_mongod_build
-        if [ $? != 0 ]
+        # compile mongo?
+        if [[ -z "$FETCHMCI" && -z "$SKIP_COMPILE" && "$COMPILE_FAILED" != "false" ]]
         then
-            sleep $SLEEPTIME
-            continue
+            echo COMPILING MONGO LOCALLY
+            run_mongod_build
+            if [ $? != 0 ]
+            then
+                COMPILE_FAILED=true
+            fi
+        else
+            echo SKIPPING COMPILE
         fi
-    else
-        echo SKIPPING COMPILE
+
+
+        if [ "$COMPILE_FAILED" != "false" ]
+        then
+            # execute the benchmark
+            echo RUNNING BENCHMARK
+            #run_mongo-perf
+            sleep 5
+            # save last git hash if we made it this far
+            save_last_hash
+        fi
     fi
-
-    # execute the benchmark
-    echo RUNNING BENCHMARK
-    run_mongo-perf
-
-    # save last git hash if we made it this far
-    save_last_hash()
 
     # exit if requested by user, this is a one-time (branch, tag or specific
     # commit) run, or this is a no-compile run
-    if [ -e $BREAK_PATH | -n $BRANCH | -n $SKIP_GIT ]
+    if [[ -e "$BREAK_PATH" || -n "$BRANCH" || -n "$SKIP_GIT" ]]
     then
         break
     fi
 
-
+    sleep ${SLEEPTIME}
 done
