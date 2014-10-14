@@ -265,7 +265,7 @@ function do_mci_tasks() {
 
     # fetch latest binaries from MCI
     cd ${MPERFPATH} || exit 1
-    echo "downloading binary artifacts from MCI for branch ${BRANCH}"
+    echo ; echo "downloading binary artifacts from MCI for branch ${BRANCH}"
     if [ $THIS_PLATFORM == 'Windows' ]
     then
         if [ $BRANCH == 'master' ]
