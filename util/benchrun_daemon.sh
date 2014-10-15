@@ -233,6 +233,7 @@ then
     echo "turning off numa zone reclaims and using taskset to bind CPUs for the server."
     SERVER_CPUCTL="numactl --physcpubind=${MONGOD_MASK} --interleave=all"
 elif [ -x "$tasksetpath" ]
+then
     echo "numactl not found on this machine.  using taskset to bind CPUs for the server."
     SERVER_CPUCTL="taskset -c ${MONGOD_MASK}"
 fi
