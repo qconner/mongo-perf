@@ -411,7 +411,7 @@ function run_mongo-perf() {
     fi
     if [ $? != 0 ]
     then
-      RETVAL = $?
+      RETVAL=$?
     else
 
         # drop linux caches
@@ -429,7 +429,7 @@ function run_mongo-perf() {
         fi
         if [ $? != 0 ]
         then
-            RETVAL = $?
+            RETVAL=$?
         fi
     fi
 
