@@ -167,7 +167,8 @@ then
         LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${APPEND_LIB_PATH}
     fi
     export LD_LIBRARY_PATH
-    echo "found external library dependency"
+    echo ; echo "found external library dependency"
+    #echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
 fi
 
 
@@ -409,9 +410,10 @@ function run_mongo-perf() {
     else
         ${CPUCTL} python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
     fi
-    if [ $? != 0 ]
+    RVAL=$?
+    if [ $RVAL != 0 ]
     then
-      RETVAL=$?
+      RETVAL=$RVAL
     else
 
         # drop linux caches
@@ -427,9 +429,10 @@ function run_mongo-perf() {
         else
             ${CPUCTL} python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
         fi
-        if [ $? != 0 ]
+        RVAL=$?
+        if [ $RVAL != 0 ]
         then
-            RETVAL=$?
+          RETVAL=$RVAL
         fi
     fi
 

@@ -233,9 +233,14 @@ def main():
     # TODO: put in path exists check
     repo = git.Repo(args.repo_path)
 
-    # get the server info and status
-    (server_build_info, server_status) = get_server_info(hostname=args.hostname, port=args.port,
-                                                         replica_set=args.replica_set)
+    try:
+        # get the server info and status
+        (server_build_info, server_status) = get_server_info(hostname=args.hostname, port=args.port,
+                                                             replica_set=args.replica_set)
+    except Exception as e:
+        print("Exception:")
+        print(e)
+        sys.exit(4)
 
     # Use hash to get commit_date
     try:
@@ -275,77 +280,91 @@ def main():
     else:
         test_bed["server_storage_engine"] = 'mmapv0'
 
-    # Open a mongo shell subprocess and load necessary files.
-    mongo_proc = Popen([args.shellpath, "--norc", "--quiet", "--port", args.port], stdin=PIPE, stdout=PIPE)
-    mongo_proc.stdin.write("load('util/utils.js')\n")
-    print "load('util/utils.js')"
-    for testfile in args.testfiles:
-        mongo_proc.stdin.write("load('" + testfile + "')\n")
-        print "load('" + testfile + "')"
+    try:
 
-    # put all write options in a Map
-    write_options = {}
-    write_options["safeGLE"] = args.safeMode
-    write_options["writeConcernJ"] = args.j
-    write_options["writeConcernW"] = args.w
-    write_options["writeCmdMode"] = args.writeCmd
+        # Open a mongo shell subprocess and load necessary files.
+        mongo_proc = Popen([args.shellpath, "--norc", "--quiet", "--port", args.port], stdin=PIPE, stdout=PIPE)
+        mongo_proc.stdin.write("load('util/utils.js')\n")
+        print "load('util/utils.js')"
+        for testfile in args.testfiles:
+            mongo_proc.stdin.write("load('" + testfile + "')\n")
+            print "load('" + testfile + "')"
 
-    # Pipe commands to the mongo shell to kickoff the test.
-    cmdstr = ("mongoPerfRunTests(" +
-              str(args.threads) + ", " +
-              str(args.multidb) + ", " +
+        # put all write options in a Map
+        write_options = {}
+        write_options["safeGLE"] = args.safeMode
+        write_options["writeConcernJ"] = args.j
+        write_options["writeConcernW"] = args.w
+        write_options["writeCmdMode"] = args.writeCmd
+
+        # Pipe commands to the mongo shell to kickoff the test.
+        cmdstr = ("mongoPerfRunTests(" +
+                  str(args.threads) + ", " +
+                  str(args.multidb) + ", " +
 
               str(args.seconds) + ", " +
-              str(args.trials) + ", " +
-              "'" + args.reportlabel + "', " +
-              "'" + args.reporthost + "', " +
-              "'" + args.reportport + "', " +
-              "'" + str(datetime.datetime.now()) + "', " +
-              str(args.shard) + ", " +
-              str(json.dumps(write_options)) + ", " +
-              str(json.dumps(test_bed)) +
-              ");\n")
-    mongo_proc.stdin.write(cmdstr)
-    print cmdstr
-    mongo_proc.stdin.close()
+                  str(args.trials) + ", " +
+                  "'" + args.reportlabel + "', " +
+                  "'" + args.reporthost + "', " +
+                  "'" + args.reportport + "', " +
+                  "'" + str(datetime.datetime.now()) + "', " +
+                  str(args.shard) + ", " +
+                  str(json.dumps(write_options)) + ", " +
+                  str(json.dumps(test_bed)) +
+                  ");\n")
+        mongo_proc.stdin.write(cmdstr)
+        print cmdstr
+        mongo_proc.stdin.close()
 
-    # Read test output.
-    readout = False
-    getting_results = False
-    got_results = False
-    line_results = ""
-    for line in iter(mongo_proc.stdout.readline, ''):
-        line = line.strip()
-        if line == "@@@START@@@":
-            readout = True
-            getting_results = False
-        elif line == "@@@END@@@":
-            readout = False
-            getting_results = False
-        elif line == "@@@RESULTS_START@@@":
-            readout = False
-            getting_results = True
-        elif line == "@@@RESULTS_END@@@":
-            readout = False
-            got_results = True
-            getting_results = False
-        elif readout:
-            print line
-        elif not got_results and getting_results:
-            line_results += line
-            # Encode as mongodb-extended-json
-    results = cleanup_result_dates(json.loads(line_results))
-    if not args.nodyno:
-        # send results to dyno
-        send_results_to_dyno(results, args.reportlabel, write_options, test_bed, cmdstr, server_status,
-                             server_build_info, shell_build_info, args)
+    except Exception as e:
+        print("Exception:")
+        print(e)
+        sys.exit(3)
 
-    if not got_results:
-        print("ERROR: abnormal end: no results")
-        sys.exit(2)
-    else:
-        print("Finished Testing.")
-        sys.exit(0)
+    try:
+        # Read test output.
+        readout = False
+        getting_results = False
+        got_results = False
+        line_results = ""
+        for line in iter(mongo_proc.stdout.readline, ''):
+            line = line.strip()
+            if line == "@@@START@@@":
+                readout = True
+                getting_results = False
+            elif line == "@@@END@@@":
+                readout = False
+                getting_results = False
+            elif line == "@@@RESULTS_START@@@":
+                readout = False
+                getting_results = True
+            elif line == "@@@RESULTS_END@@@":
+                readout = False
+                got_results = True
+                getting_results = False
+            elif readout:
+                print line
+            elif not got_results and getting_results:
+                line_results += line
+                # Encode as mongodb-extended-json
+                results = cleanup_result_dates(json.loads(line_results))
+
+        if not args.nodyno:
+            # send results to dyno
+            send_results_to_dyno(results, args.reportlabel, write_options, test_bed, cmdstr, server_status,
+                                 server_build_info, shell_build_info, args)
+
+        if not got_results:
+            print("ERROR: abnormal end: no results")
+            sys.exit(2)
+        else:
+            print("Finished Testing.")
+            sys.exit(0)
+    except Exception as e:
+        print("Exception:")
+        print(e)
+        sys.exit(5)
+
 
 if __name__ == '__main__':
     main()
