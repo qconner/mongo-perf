@@ -340,8 +340,12 @@ def main():
         send_results_to_dyno(results, args.reportlabel, write_options, test_bed, cmdstr, server_status,
                              server_build_info, shell_build_info, args)
 
-    print("Finished Testing.")
-
+    if not got_results:
+        print("ERROR: abnormal end: no results")
+        sys.exit(2)
+    else:
+        print("Finished Testing.")
+        sys.exit(0)
 
 if __name__ == '__main__':
     main()

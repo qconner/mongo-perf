@@ -393,6 +393,9 @@ function run_mongo-perf() {
     # list of thread counts to run (high counts first to minimize impact of first trial)
     THREAD_COUNTS="16 8 4 2 1"
 
+    # return value for this function
+    RETVAL=0
+
     # drop linux caches
     if [ -e /proc/sys/vm/drop_caches ]
     then
@@ -406,21 +409,29 @@ function run_mongo-perf() {
     else
         ${CPUCTL} python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
     fi
-
-    # drop linux caches
-    if [ -e /proc/sys/vm/drop_caches ]
+    if [ $? != 0 ]
     then
-        ${SUDO} bash -c "echo 3 > /proc/sys/vm/drop_caches"
-    fi
-
-    # Run with multi-DB (4 DBs.)
-    if [ $THIS_PLATFORM == 'Windows' ]
-    then
-        python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path `cygpath -w ${BUILD_DIR}` --safe false -w 0 -j false --writeCmd true
+      RETVAL = $?
     else
-        ${CPUCTL} python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
-    fi
 
+        # drop linux caches
+        if [ -e /proc/sys/vm/drop_caches ]
+        then
+            ${SUDO} bash -c "echo 3 > /proc/sys/vm/drop_caches"
+        fi
+
+        # Run with multi-DB (4 DBs.)
+        if [ $THIS_PLATFORM == 'Windows' ]
+        then
+            python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path `cygpath -w ${BUILD_DIR}` --safe false -w 0 -j false --writeCmd true
+        else
+            ${CPUCTL} python benchrun.py -l "${TIME}_${THIS_PLATFORM}${PLATFORM_SUFFIX}-multi" --rhost "$RHOST" --rport "$RPORT" -t ${THREAD_COUNTS} -s "$SHELLPATH" -m 4 -f $TESTCASES --trialTime 5 --trialCount 7 --mongo-repo-path ${BUILD_DIR} --safe false -w 0 -j false --writeCmd true
+        fi
+        if [ $? != 0 ]
+        then
+            RETVAL = $?
+        fi
+    fi
 
     # Kill the mongod process and perform cleanup.
     kill -n 9 ${MONGOD_PID}
@@ -428,8 +439,8 @@ function run_mongo-perf() {
     pkill -9 mongod            # needed this for loitering mongod executable w/o .exe extension?
     sleep 5
     rm -rf ${DBPATH}/*
-
-}
+    return $RETVAL
+ }
 
 
 # housekeeping for meaningful benchmarks
@@ -509,8 +520,14 @@ do
             # execute the benchmark
             echo ; echo RUNNING BENCHMARK
             run_mongo-perf
-            # save last git hash if we made it this far
-            save_last_hash
+            if [ $? == 0 ]
+            then
+                # save last git hash if we made it this far
+                save_last_hash
+            else
+                echo ; echo "ERROR ENCOUNTERED RUNNING BENCHMARK"
+                break
+            fi
         fi
     fi
 
