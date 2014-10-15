@@ -59,10 +59,13 @@ SHELLPATH=${BUILD_DIR}/${MONGO}
 # branch to monitor for checkins
 BRANCH=master
 
+# Darwin, Windows defaults
 NUM_CPUS=4
+NUM_SOCKETS=1
 if [ -e /proc/cpuinfo ]
 then
     NUM_CPUS=$(grep ^processor /proc/cpuinfo | wc -l | awk '{print $1}')
+    NUM_SOCKETS=$(grep ^physical\ id /proc/cpuinfo | sort | uniq | wc -l)
 fi
 
 # remote database to store results
@@ -86,7 +89,7 @@ SLEEPTIME=60
 # parse command line options, if any
 OPTIND=1 
 #set -x
-while getopts "b:s:d:f?:C?:G?:L:1?:" opt; do
+while getopts "b:s:d:f?:C?:G?:L:1?:B:" opt; do
     case "${opt}" in
     b)
         # run only this branch
@@ -116,6 +119,10 @@ while getopts "b:s:d:f?:C?:G?:L:1?:" opt; do
         # external library path
         EXT_LIB=${OPTARG}
         ;;
+    B)
+        # external library branch
+        EXT_LIB_BRANCH=${OPTARG}
+        ;;
     1)
         # run one time only
         ONETIME="true"
@@ -131,10 +138,10 @@ done
 DLPATH="${MPERFPATH}/download"
 
 # developer options for the mongod command line, if any
-#MONGOD_OPT="--storageEngine wiredtiger"
+#MONGOD_OPT="--storageEngine mmapv1"
 
 # developer options for the scons command line, if any
-#SCONS_OPT="--wiredtiger --cpppath=${HOME}/wiredtiger/LOCAL_INSTALL/include --libpath=${HOME}/wiredtiger/LOCAL_INSTALL/lib core"
+#SCONS_OPT="--cpppath= --libpath="
 
 # skip compile?  For local development use.
 # use the -C option
@@ -147,14 +154,17 @@ DLPATH="${MPERFPATH}/download"
 # uncomment to run once through the loop only
 #ONETIME="true"
 
-# any external library dependencies?
-# use the -L option
-#EXT_LIB="$HOME/wiredtiger"
-#EXT_LIB="$HOME/src/wiredtiger"
+# any external library dependencies?  i.e. wired tiger
+# use the -L option, -B option
+#EXT_LIB="$HOME/src/foo"
 if [ -n "$EXT_LIB" ]
 then
     EXT_LIB_PREFIX="$EXT_LIB/LOCAL_INSTALL"
     APPEND_LIB_PATH="$EXT_LIB_PREFIX/lib"
+fi
+if [ -z "$EXT_LIB_BRANCH" ]
+then
+    EXT_LIB_BRANCH='master'
 fi
 
 # any additions to the shared library path?
@@ -195,26 +205,47 @@ then
     SUDO=''
 fi
 
-
-
-# ensure numa zone reclaims are off
-# TODO: prepend to the mongod command line
-CPUCTL=""
-numapath=$(which numactl)
-if [[ -x "$numapath" ]]
+# If multi socket, then use the first socket for benchrun and the rest for mongod,
+# otherwise take a percentage of cores to run benchrun and mongod
+BENCHRUN_MASK=""
+MONGOD_MASK=""
+if [ "$NUM_SOCKETS" == 1 ]
 then
-    echo "turning off numa zone reclaims with:"
-    CPUCTL="numactl --interleave=all"
-    # TODO: intelligently set physcpubind
-    #CPUCTL="numactl --physcpubind=0-7 --interleave=all"
-    echo $CPUCTL
+    BENCHRUN_MASK=0-$(bc <<< "($NUM_CPUS / $FACTOR ) -1")
+    MONGOD_MASK=$(bc <<< "($NUM_CPUS / $FACTOR )")-$NUM_CPUS
 else
-    echo "numactl not found on this machine"
-    # TODO: run taskset instead
-    # echo taskset -xff
+    BENCHRUN_MASK=`numactl --hardware | grep ^node\ 0\ cpus: | sed -r 's/node 0 cpus: //' | sed -r 's/ /,/g'`
+    for i in `seq 1 $NUM_SOCKETS`
+    do
+        MONGOD_MASK=$MONGOD_MASK","`numactl --hardware | grep ^node\ $i\ cpus: | sed -r 's/node '"$i"' cpus: //' | sed -r 's/ /,/g'`
+    done
+    MONGOD_MASK=`echo $MONGOD_MASK | sed -r 's/,//' | sed 's/,*$//'`
+
 fi
 
+# ensure numa zone reclaims are off for mongod
+# and bind the server to a set of CPUs
+SERVER_CPUCTL=""
+numapath=$(which numactl)
+tasksetpath=$(which taskset)
+if [[ -x "$numapath" && -x "$tasksetpath" ]]
+then
+    echo "turning off numa zone reclaims and using taskset to bind CPUs for the server."
+    SERVER_CPUCTL="numactl --physcpubind=${MONGOD_MASK} --interleave=all"
+elif [ -x "$tasksetpath" ]
+    then
+        echo "numactl not found on this machine.  using taskset to bind CPUs for the server."
+        SERVER_CPUCTL="taskset -c ${MONGOD_MASK}"
+    fi
+fi
 
+# bind the client (mongo shell) to a different set of CPUs
+CLIENT_CPUCTL=""
+if [ -x "$tasksetpath" ]
+then
+    echo "using taskset to bind CPUs for the client."
+    CLIENT_CPUCTL="taskset -c ${MONGOD_MASK}"
+fi
 
 
 function do_git_tasks() {
@@ -246,7 +277,7 @@ function do_library_git_pull() {
         echo ; echo "LIBRARY CHECKOUT"
         git fetch --all
         git checkout -- .
-        git checkout $BRANCH
+        git checkout $EXT_LIB_BRANCH
         git pull
         git clean -fqdx
     else
@@ -368,6 +399,7 @@ function run_mongod_build() {
     fi
 }
 
+
 function run_mongo-perf() {
     # Kick off a mongod process.
     cd $BUILD_DIR
@@ -377,7 +409,7 @@ function run_mongo-perf() {
         (./${MONGOD} --dbpath "${DBPATH}" --smallfiles --logpath mongoperf.log &)
     else
         rm -rf ${DBPATH}/*
-        ${CPUCTL} ./${MONGOD} --dbpath "${DBPATH}" --smallfiles --fork --logpath mongoperf.log ${MONGOD_OPT}
+        ${CPUCTL} ./${MONGOD} --dbpath "${DBPATH}" --smallfiles --fork --logpath mongoperf.log --nojournal --syncdelay 43200 ${MONGOD_OPT}
     fi
     # TODO: doesn't get set properly with --fork ?
     MONGOD_PID=$!
@@ -389,7 +421,6 @@ function run_mongo-perf() {
 
     # list of testcase definitions
     TESTCASES=$(find testcases/ -name *.js)
-
 
     # list of thread counts to run (high counts first to minimize impact of first trial)
     THREAD_COUNTS="16 8 4 2 1"
