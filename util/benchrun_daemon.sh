@@ -209,34 +209,32 @@ fi
 # otherwise take a percentage of cores to run benchrun and mongod
 BENCHRUN_MASK=""
 MONGOD_MASK=""
+numapath=$(which numactl)
+tasksetpath=$(which taskset)
 if [ "$NUM_SOCKETS" == 1 ]
 then
     BENCHRUN_MASK=0-$(bc <<< "($NUM_CPUS / $FACTOR ) -1")
     MONGOD_MASK=$(bc <<< "($NUM_CPUS / $FACTOR )")-$NUM_CPUS
-else
+elif [[ -x "$numapath" && -x "$tasksetpath" ]]
+then
     BENCHRUN_MASK=`numactl --hardware | grep ^node\ 0\ cpus: | sed -r 's/node 0 cpus: //' | sed -r 's/ /,/g'`
     for i in `seq 1 $NUM_SOCKETS`
     do
         MONGOD_MASK=$MONGOD_MASK","`numactl --hardware | grep ^node\ $i\ cpus: | sed -r 's/node '"$i"' cpus: //' | sed -r 's/ /,/g'`
     done
     MONGOD_MASK=`echo $MONGOD_MASK | sed -r 's/,//' | sed 's/,*$//'`
-
 fi
 
 # ensure numa zone reclaims are off for mongod
-# and bind the server to a set of CPUs
+# and bind the server to a set of CPUs (if on Linux)
 SERVER_CPUCTL=""
-numapath=$(which numactl)
-tasksetpath=$(which taskset)
 if [[ -x "$numapath" && -x "$tasksetpath" ]]
 then
     echo "turning off numa zone reclaims and using taskset to bind CPUs for the server."
     SERVER_CPUCTL="numactl --physcpubind=${MONGOD_MASK} --interleave=all"
 elif [ -x "$tasksetpath" ]
-    then
-        echo "numactl not found on this machine.  using taskset to bind CPUs for the server."
-        SERVER_CPUCTL="taskset -c ${MONGOD_MASK}"
-    fi
+    echo "numactl not found on this machine.  using taskset to bind CPUs for the server."
+    SERVER_CPUCTL="taskset -c ${MONGOD_MASK}"
 fi
 
 # bind the client (mongo shell) to a different set of CPUs
