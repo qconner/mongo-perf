@@ -304,7 +304,7 @@ def main():
                   str(args.seconds) + ", " +
                   str(args.trials) + ", " +
                   "'" + args.reportlabel + "', " +
-                  + str(args.suite) + ", " +
+                  str(args.suite) + ", " +
                   "'" + args.reporthost + "', " +
                   "'" + args.reportport + "', " +
                   "'" + str(datetime.datetime.now()) + "', " +
